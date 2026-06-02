@@ -313,6 +313,69 @@ export function renderMarkdown(
 
   md.renderer.rules.strong_close = () => "</strong>";
 
+  let tableRowIndex = 0;
+
+  md.renderer.rules.table_open = () => {
+    tableRowIndex = 0;
+    return `<section style="${toStyleString({
+      marginTop: `${paragraphSpacing}em`,
+      marginBottom: `${paragraphSpacing}em`,
+      overflowX: "auto",
+      borderRadius: `${borderRadius}px`,
+      border: `1px solid ${hexToRgba(textColor, 0.14)}`,
+    })}"><table style="${toStyleString({
+      width: "100%",
+      minWidth: "100%",
+      borderCollapse: "collapse",
+      tableLayout: "fixed",
+      fontFamily: fontStack,
+      fontWeight,
+      letterSpacing: ls,
+      fontSize: `${Math.round(fontSize * 0.92)}px`,
+      lineHeight: "1.6",
+      color: textColor,
+      backgroundColor,
+    })}">`;
+  };
+
+  md.renderer.rules.table_close = () => "</table></section>";
+
+  md.renderer.rules.tr_open = () => {
+    const background =
+      tableRowIndex % 2 === 0
+        ? backgroundColor
+        : hexToRgba(primaryColor, 0.045);
+    tableRowIndex++;
+    return `<tr style="background-color: ${background};">`;
+  };
+
+  md.renderer.rules.th_open = () => {
+    return `<th style="${toStyleString({
+      padding: "10px 12px",
+      borderRight: `1px solid ${hexToRgba(textColor, 0.12)}`,
+      borderBottom: `1px solid ${hexToRgba(textColor, 0.16)}`,
+      backgroundColor: hexToRgba(primaryColor, 0.14),
+      color: textColor,
+      fontWeight: "700",
+      textAlign: "left",
+      verticalAlign: "top",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+    })}">`;
+  };
+
+  md.renderer.rules.td_open = () => {
+    return `<td style="${toStyleString({
+      padding: "10px 12px",
+      borderRight: `1px solid ${hexToRgba(textColor, 0.1)}`,
+      borderBottom: `1px solid ${hexToRgba(textColor, 0.1)}`,
+      textAlign: "left",
+      verticalAlign: "top",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+    })}">`;
+  };
+
   md.renderer.rules.hr = () => {
     return `<hr style="${toStyleString({
       border: "none",
