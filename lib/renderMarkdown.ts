@@ -142,6 +142,21 @@ export function renderMarkdown(
             borderBottom: `1px solid ${hexToRgba(textColor, 0.15)}`,
           })}">`;
 
+        case "soft-underline":
+          return `<h2 style="${toStyleString({
+            fontFamily: fontStack,
+            letterSpacing: ls,
+            fontSize: `${size}px`,
+            fontWeight: "500",
+            color: primaryColor,
+            marginTop: `${sectionSpacing}em`,
+            marginBottom: "0.8em",
+            lineHeight: "1.4",
+            textAlign: "center",
+            paddingBottom: "12px",
+            borderBottom: `1px solid ${hexToRgba(primaryColor, 0.25)}`,
+          })}">`;
+
         case "plain":
           return `<h2 style="${toStyleString({
             fontFamily: fontStack,

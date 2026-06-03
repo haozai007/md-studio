@@ -1,7 +1,7 @@
 import { FontFamily, FontWeight } from "./fonts";
 
-export type ThemeName = "supo-minimal" | "ai-project" | "design-case";
-export type H2Style = "left-border" | "tag-label" | "numbered" | "divider" | "plain";
+export type ThemeName = "supo-minimal" | "ai-project" | "design-case" | "light-note-blue";
+export type H2Style = "left-border" | "tag-label" | "numbered" | "divider" | "plain" | "soft-underline";
 export type BoldStyle = "bold-only" | "primary-color" | "highlight" | "underline";
 
 export interface StyleSettings {
@@ -89,6 +89,27 @@ export const themePresets: Record<ThemeName, ThemePreset> = {
     fontFamily: "optima-light",
     letterSpacing: 0.3,
     fontWeight: "400",
+  },
+  "light-note-blue": {
+    name: "light-note-blue",
+    label: "轻笔记蓝",
+    primaryColor: "#4BA3C7",
+    backgroundColor: "#FBFCFA",
+    textColor: "#3F3F3F",
+    fontSize: 15,
+    lineHeight: 1.8,
+    headingFontSize: 22,
+    borderRadius: 6,
+    contentWidth: 600,
+    h2Style: "soft-underline",
+    boldStyle: "primary-color",
+    paragraphSpacing: 0.75,
+    sectionSpacing: 1.9,
+    listIndent: 1.2,
+    listItemSpacing: 0.25,
+    fontFamily: "optima-light",
+    letterSpacing: 0.4,
+    fontWeight: "300",
   },
   "design-case": {
     name: "design-case",

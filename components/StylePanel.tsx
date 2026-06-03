@@ -87,6 +87,7 @@ const h2StyleOptions: { value: H2Style; label: string }[] = [
   { value: "tag-label", label: "底色标签" },
   { value: "numbered", label: "编号标题" },
   { value: "divider", label: "上下分隔线" },
+  { value: "soft-underline", label: "浅色底线" },
   { value: "plain", label: "纯文本" },
 ];
 
