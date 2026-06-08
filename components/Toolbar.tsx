@@ -3,6 +3,7 @@
 import React from "react";
 
 interface ToolbarProps {
+  onInsertImage: () => void;
   onCopy: () => void;
   onExport: () => void;
   onReset: () => void;
@@ -12,6 +13,7 @@ interface ToolbarProps {
 }
 
 export default function Toolbar({
+  onInsertImage,
   onCopy,
   onExport,
   onReset,
@@ -31,6 +33,12 @@ export default function Toolbar({
       </div>
 
       <div className="flex items-center gap-2">
+        <button
+          onClick={onInsertImage}
+          className="px-4 py-1.5 text-sm font-medium rounded-md border border-warm-200 text-ink/70 hover:border-ink/20 hover:text-ink transition-colors bg-white"
+        >
+          插入图片
+        </button>
         <button
           onClick={onToggleMobile}
           className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${

@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import Toolbar from "@/components/Toolbar";
-import MarkdownEditor from "@/components/MarkdownEditor";
+import MarkdownEditor, { MarkdownEditorHandle } from "@/components/MarkdownEditor";
 import PreviewPane from "@/components/PreviewPane";
 import StylePanel from "@/components/StylePanel";
 import { StyleSettings, getDefaultSettings } from "@/lib/themeConfig";
@@ -96,6 +96,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<MarkdownEditorHandle>(null);
 
   const handleCopy = useCallback(async () => {
     const html = renderMarkdown(markdown, settings, "export");
@@ -148,10 +149,20 @@ export default function Home() {
     setSettings(getDefaultSettings());
   }, []);
 
+  const handleInsertImage = useCallback(() => {
+    const url = window.prompt("请输入图片 URL（https://...）");
+    if (!url?.trim()) return;
+
+    const alt = window.prompt("请输入图片描述（可选）") || "";
+    const imageMarkdown = `![${alt.trim()}](${url.trim()})`;
+    editorRef.current?.insertText(`\n\n${imageMarkdown}\n\n`);
+  }, []);
+
   return (
     <AppShell
       toolbar={
         <Toolbar
+          onInsertImage={handleInsertImage}
           onCopy={handleCopy}
           onExport={handleExport}
           onReset={handleReset}
@@ -161,7 +172,11 @@ export default function Home() {
         />
       }
       editor={
-        <MarkdownEditor value={markdown} onChange={setMarkdown} />
+        <MarkdownEditor
+          ref={editorRef}
+          value={markdown}
+          onChange={setMarkdown}
+        />
       }
       preview={
         <PreviewPane
