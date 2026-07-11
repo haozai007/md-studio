@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useMemo, useRef, useState, useEffect, forwardRef } from "react";
-import { renderMarkdown } from "@/lib/renderMarkdown";
+import React, { useRef, useState, useEffect, forwardRef } from "react";
+import { RenderResult } from "@/lib/renderMarkdown";
 import { StyleSettings } from "@/lib/themeConfig";
 
 interface PreviewPaneProps {
-  markdown: string;
+  result: RenderResult;
   settings: StyleSettings;
   isMobile: boolean;
   onToggleMobile: () => void;
@@ -90,11 +90,8 @@ const FRAME_PADDING = 8;
 const FRAME_W = SCREEN_W + FRAME_PADDING * 2; // 391
 
 const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
-  function PreviewPane({ markdown, settings, isMobile, onToggleMobile }, ref) {
-    const html = useMemo(
-      () => renderMarkdown(markdown, settings),
-      [markdown, settings]
-    );
+  function PreviewPane({ result, settings, isMobile, onToggleMobile }, ref) {
+    const html = result.html;
 
     const scalerParentRef = useRef<HTMLDivElement>(null);
     const [phoneScale, setPhoneScale] = useState(1);
@@ -136,7 +133,14 @@ const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
           ref={scalerParentRef}
           className="flex-1 overflow-auto bg-[#E8E8E0] p-6 flex justify-center items-start"
         >
-          {isMobile ? (
+          {!result.validation.valid ? (
+            <div className="w-full max-w-xl rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+              <p className="font-semibold mb-2">预览已被安全检查阻止</p>
+              <p className="text-red-700/80">
+                {result.validation.errors[0]?.message || "生成内容包含不安全 HTML。"}
+              </p>
+            </div>
+          ) : isMobile ? (
             <div
               className="shrink-0"
               style={{

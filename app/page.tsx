@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useMemo } from "react";
 import AppShell from "@/components/AppShell";
 import Toolbar from "@/components/Toolbar";
 import MarkdownEditor, { MarkdownEditorHandle } from "@/components/MarkdownEditor";
 import PreviewPane from "@/components/PreviewPane";
-import StylePanel from "@/components/StylePanel";
-import { StyleSettings, getDefaultSettings } from "@/lib/themeConfig";
-import { renderMarkdown, wrapExportHTML } from "@/lib/renderMarkdown";
+import InspectorPanel, { InspectorTab } from "@/components/InspectorPanel";
+import { StyleSettings, applyThemePreset, getDefaultSettings } from "@/lib/themeConfig";
+import { compileWechatArticle, wrapExportHTML } from "@/lib/renderMarkdown";
+import { analyzeArticle } from "@/lib/articleAnalysis";
+import { defaultSmartFormatting, SmartFormattingSettings } from "@/lib/articleTypes";
 
 const defaultMarkdown = `# AI苏坡爱豆 MD Studio
 
@@ -95,14 +97,35 @@ export default function Home() {
   const [settings, setSettings] = useState<StyleSettings>(getDefaultSettings());
   const [copied, setCopied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [smartSettings, setSmartSettings] = useState<SmartFormattingSettings>(defaultSmartFormatting);
+  const [acceptedKeywordIds, setAcceptedKeywordIds] = useState<Set<string>>(() => new Set());
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("smart");
   const previewRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditorHandle>(null);
 
+  const analysis = useMemo(() => analyzeArticle(markdown), [markdown]);
+  const activeKeywordIds = useMemo(
+    () => analysis.keywordCandidates.filter((item) => acceptedKeywordIds.has(item.id)).map((item) => item.id),
+    [acceptedKeywordIds, analysis.keywordCandidates]
+  );
+  const renderResult = useMemo(
+    () =>
+      compileWechatArticle(markdown, settings, "export", {
+        smart: smartSettings,
+        analysis,
+        acceptedKeywordIds: activeKeywordIds,
+      }),
+    [activeKeywordIds, analysis, markdown, settings, smartSettings]
+  );
+
   const handleCopy = useCallback(async () => {
-    const html = renderMarkdown(markdown, settings, "export");
-    const temp = document.createElement("div");
-    temp.innerHTML = html;
-    const plainText = temp.textContent || "";
+    if (!renderResult.validation.valid) {
+      setInspectorTab("checks");
+      window.alert(renderResult.validation.errors[0]?.message || "公众号兼容检查未通过，暂未复制。");
+      return;
+    }
+    const html = renderResult.html;
+    const plainText = renderResult.plainText;
     try {
       const clipboardItem = new ClipboardItem({
         "text/html": new Blob([html], { type: "text/html" }),
@@ -129,11 +152,15 @@ export default function Home() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
-  }, [markdown, settings]);
+  }, [renderResult]);
 
   const handleExport = useCallback(() => {
-    const html = renderMarkdown(markdown, settings, "export");
-    const fullHTML = wrapExportHTML(html, settings);
+    if (!renderResult.validation.valid) {
+      setInspectorTab("checks");
+      window.alert(renderResult.validation.errors[0]?.message || "公众号兼容检查未通过，暂未导出。");
+      return;
+    }
+    const fullHTML = wrapExportHTML(renderResult.html, settings);
     const blob = new Blob([fullHTML], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -143,7 +170,7 @@ export default function Home() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [markdown, settings]);
+  }, [renderResult, settings]);
 
   const handleReset = useCallback(() => {
     setSettings(getDefaultSettings());
@@ -158,6 +185,28 @@ export default function Home() {
     editorRef.current?.insertText(`\n\n${imageMarkdown}\n\n`);
   }, []);
 
+  const handleKeywordToggle = useCallback((id: string, accepted: boolean) => {
+    setAcceptedKeywordIds((current) => {
+      const next = new Set(current);
+      if (accepted) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const handleSetAllKeywords = useCallback(
+    (accepted: boolean) => {
+      setAcceptedKeywordIds(accepted ? new Set(analysis.keywordCandidates.map((item) => item.id)) : new Set());
+    },
+    [analysis.keywordCandidates]
+  );
+
+  const handleApplyRecommendedTheme = useCallback(() => {
+    setSettings((current) => applyThemePreset(current, analysis.recommendation.theme));
+  }, [analysis.recommendation.theme]);
+
+  const totalIssues = renderResult.validation.issues.length + analysis.qualityIssues.length;
+
   return (
     <AppShell
       toolbar={
@@ -169,6 +218,9 @@ export default function Home() {
           copied={copied}
           isMobile={isMobile}
           onToggleMobile={() => setIsMobile(!isMobile)}
+          errorCount={renderResult.validation.errors.length}
+          issueCount={totalIssues}
+          onOpenChecks={() => setInspectorTab("checks")}
         />
       }
       editor={
@@ -181,14 +233,27 @@ export default function Home() {
       preview={
         <PreviewPane
           ref={previewRef}
-          markdown={markdown}
+          result={renderResult}
           settings={settings}
           isMobile={isMobile}
           onToggleMobile={() => setIsMobile(!isMobile)}
         />
       }
       stylePanel={
-        <StylePanel settings={settings} onChange={setSettings} />
+        <InspectorPanel
+          activeTab={inspectorTab}
+          onTabChange={setInspectorTab}
+          analysis={analysis}
+          validation={renderResult.validation}
+          smart={smartSettings}
+          onSmartChange={setSmartSettings}
+          settings={settings}
+          onSettingsChange={setSettings}
+          acceptedKeywordIds={acceptedKeywordIds}
+          onKeywordToggle={handleKeywordToggle}
+          onSetAllKeywords={handleSetAllKeywords}
+          onApplyRecommendedTheme={handleApplyRecommendedTheme}
+        />
       }
     />
   );

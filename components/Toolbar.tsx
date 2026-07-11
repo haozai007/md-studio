@@ -10,6 +10,9 @@ interface ToolbarProps {
   copied: boolean;
   isMobile: boolean;
   onToggleMobile: () => void;
+  errorCount: number;
+  issueCount: number;
+  onOpenChecks: () => void;
 }
 
 export default function Toolbar({
@@ -20,6 +23,9 @@ export default function Toolbar({
   copied,
   isMobile,
   onToggleMobile,
+  errorCount,
+  issueCount,
+  onOpenChecks,
 }: ToolbarProps) {
   return (
     <header className="flex items-center justify-between h-14 px-6 border-b border-warm-200 bg-white/80 backdrop-blur-sm shrink-0">
@@ -48,6 +54,18 @@ export default function Toolbar({
           }`}
         >
           {isMobile ? "桌面预览" : "手机预览"}
+        </button>
+        <button
+          onClick={onOpenChecks}
+          className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
+            errorCount
+              ? "border-red-200 bg-red-50 text-red-700"
+              : issueCount
+                ? "border-amber-200 bg-amber-50 text-amber-700"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {errorCount ? `${errorCount} 项错误` : issueCount ? `${issueCount} 项提醒` : "检查通过"}
         </button>
         <button
           onClick={onCopy}

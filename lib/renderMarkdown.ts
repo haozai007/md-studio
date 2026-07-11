@@ -1,436 +1,439 @@
 import MarkdownIt from "markdown-it";
-import { StyleSettings } from "./themeConfig";
+import { ArticleAnalysis, ArticleType, SmartFormattingSettings } from "./articleTypes";
+import { analyzeArticle } from "./articleAnalysis";
 import { getFontStack, fontOptions } from "./fonts";
+import {
+  clamp,
+  escapeAttribute,
+  hexToRgba,
+  leaf,
+  normalizeChinesePunctuation,
+  safeURL,
+  toStyleString,
+} from "./htmlUtils";
+import {
+  renderArticleTitle,
+  renderCodeBlock,
+  renderImage,
+  renderIntroCard,
+  renderSignature,
+  renderToc,
+  ThemeComponentContext,
+} from "./themeComponents";
+import { StyleSettings, themePresets } from "./themeConfig";
+import { validateWechatHTML, ValidationReport } from "./wechatValidator";
 
-function toStyleString(
-  styles: Record<string, string | number | undefined>
-): string {
-  return Object.entries(styles)
-    .filter(([, v]) => v !== undefined && v !== "")
-    .map(
-      ([k, v]) =>
-        `${k.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${v}`
-    )
-    .join("; ");
+export interface RenderOptions {
+  smart?: SmartFormattingSettings;
+  analysis?: ArticleAnalysis;
+  acceptedKeywordIds?: string[];
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+export interface RenderResult {
+  html: string;
+  plainText: string;
+  analysis: ArticleAnalysis;
+  validation: ValidationReport;
+}
+
+function normalizeSettings(settings: StyleSettings): StyleSettings {
+  const fallback = themePresets[settings.theme] || themePresets["supo-minimal"];
+  const color = (value: string, defaultValue: string) =>
+    /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : defaultValue;
+  return {
+    ...fallback,
+    ...settings,
+    theme: themePresets[settings.theme] ? settings.theme : "supo-minimal",
+    primaryColor: color(settings.primaryColor, fallback.primaryColor),
+    backgroundColor: color(settings.backgroundColor, fallback.backgroundColor),
+    textColor: color(settings.textColor, fallback.textColor),
+    fontSize: clamp(settings.fontSize, 13, 22),
+    lineHeight: clamp(settings.lineHeight, 1.3, 2.5),
+    headingFontSize: clamp(settings.headingFontSize, 18, 36),
+    borderRadius: clamp(settings.borderRadius, 0, 24),
+    contentWidth: clamp(settings.contentWidth, 360, 720),
+    paragraphSpacing: clamp(settings.paragraphSpacing, 0.2, 2),
+    sectionSpacing: clamp(settings.sectionSpacing, 0.5, 3.5),
+    listIndent: clamp(settings.listIndent, 0.5, 2.5),
+    listItemSpacing: clamp(settings.listItemSpacing, 0, 0.8),
+    letterSpacing: clamp(settings.letterSpacing, 0, 2),
+    fontFamily: fontOptions[settings.fontFamily] ? settings.fontFamily : fallback.fontFamily,
+    fontWeight: settings.fontWeight === "300" ? "300" : "400",
+  };
+}
+
+function stripSmartDecorations(
+  markdown: string,
+  analysis: ArticleAnalysis,
+  smart: SmartFormattingSettings
+): string {
+  const lines = markdown.split(/\r?\n/);
+  const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
+  if (titleIndex >= 0) lines.splice(titleIndex, 1);
+  if (smart.showIntro && analysis.intro) {
+    let cursor = Math.max(0, titleIndex);
+    while (cursor < lines.length && !lines[cursor].trim()) cursor++;
+    if (/^>/.test(lines[cursor] || "")) {
+      while (cursor < lines.length && (/^>/.test(lines[cursor]) || !lines[cursor].trim())) {
+        lines.splice(cursor, 1);
+      }
+    }
+  }
+  return lines.join("\n").replace(/^\s+/, "");
+}
+
+function plainTextFromMarkdown(markdown: string): string {
+  return markdown
+    .replace(/^---[\s\S]*?---\s*/m, "")
+    .replace(/```[\s\S]*?```/g, (value) => value.replace(/^```[^\n]*|```$/g, ""))
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/[*_~`]/g, "")
+    .trim();
+}
+
+function renderHighlightedText(
+  value: string,
+  phrases: string[],
+  color: string,
+  width: number
+): string {
+  const normalized = normalizeChinesePunctuation(value);
+  if (!phrases.length) return leaf(normalized);
+  const matches: { start: number; end: number }[] = [];
+  phrases
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .forEach((phrase) => {
+      let cursor = 0;
+      while (cursor < normalized.length) {
+        const start = normalized.indexOf(phrase, cursor);
+        if (start < 0) break;
+        const end = start + phrase.length;
+        if (!matches.some((item) => start < item.end && end > item.start)) matches.push({ start, end });
+        cursor = end;
+      }
+    });
+  if (!matches.length) return leaf(normalized);
+  matches.sort((a, b) => a.start - b.start);
+  let cursor = 0;
+  let result = "";
+  matches.forEach((match) => {
+    if (match.start > cursor) result += leaf(normalized.slice(cursor, match.start));
+    result += `<span style="border-bottom:${width}px solid ${hexToRgba(color, 0.35)};font-weight:600;">${leaf(
+      normalized.slice(match.start, match.end)
+    )}</span>`;
+    cursor = match.end;
+  });
+  if (cursor < normalized.length) result += leaf(normalized.slice(cursor));
+  return result;
+}
+
+function buildRenderer(
+  markdown: string,
+  settings: StyleSettings,
+  mode: "preview" | "export",
+  context: ThemeComponentContext,
+  smart: SmartFormattingSettings | undefined,
+  analysis: ArticleAnalysis,
+  acceptedKeywordIds: string[]
+): string {
+  const md = new MarkdownIt({ html: false, linkify: true, typographer: true, breaks: true });
+  md.validateLink = (url) => safeURL(url, "link") !== null;
+
+  const fontStack = getFontStack(settings.fontFamily, mode);
+  const headingSizes: Record<string, number> = {
+    h1: settings.headingFontSize,
+    h2: Math.round(settings.headingFontSize * 0.85),
+    h3: Math.round(settings.headingFontSize * 0.72),
+    h4: Math.round(settings.headingFontSize * 0.62),
+  };
+  const acceptedPhrases = analysis.keywordCandidates
+    .filter((candidate) => acceptedKeywordIds.includes(candidate.id))
+    .map((candidate) => candidate.phrase);
+  const underlineWidth = themePresets[settings.theme].recipe.underlineWidth;
+  const effectiveType: ArticleType = smart?.articleType && smart.articleType !== "auto" ? smart.articleType : analysis.articleType;
+  let h2Counter = 0;
+  let insideParagraph = false;
+  let insideHeading = false;
+  let insideCode = false;
+  let skipParagraph = false;
+  let listItemDepth = 0;
+  const listStack: { ordered: boolean; index: number }[] = [];
+
+  const isImageOnlyParagraph = (tokens: Parameters<NonNullable<typeof md.renderer.rules.paragraph_open>>[0], index: number) => {
+    const inline = tokens[index + 1];
+    return (
+      inline?.type === "inline" &&
+      !!inline.children?.length &&
+      inline.children.every((child) => child.type === "image" || (child.type === "text" && !child.content.trim()))
+    );
+  };
+
+  md.renderer.rules.text = (tokens, index) => {
+    const value = tokens[index].content;
+    if (insideCode || insideHeading || !insideParagraph || !smart?.enabled || !smart.highlightKeywords) {
+      return leaf(insideCode ? value : normalizeChinesePunctuation(value));
+    }
+    return renderHighlightedText(value, acceptedPhrases, settings.primaryColor, underlineWidth);
+  };
+
+  md.renderer.rules.heading_open = (tokens, index) => {
+    insideHeading = true;
+    const tag = tokens[index].tag;
+    const size = headingSizes[tag] || settings.headingFontSize;
+    const title = tokens[index + 1]?.content || "";
+    const isH2 = tag === "h2";
+    const isConclusion = isH2 && /^(结语|总结|写在最后|最后的话|尾声|小结|结论|后记|尾记)/.test(title);
+    let prefix = "";
+    if (isH2) {
+      h2Counter++;
+      if (smart?.enabled && smart.numberSections && effectiveType !== "essay") {
+        prefix = `<span style="color:${settings.primaryColor};font-size:${Math.round(size * 0.78)}px;font-weight:700;margin-right:10px;">${leaf(
+          isConclusion ? "∞" : String(h2Counter).padStart(2, "0")
+        )}</span>`;
+      }
+    }
+    const headingStyle: Record<string, string | number | undefined> = {
+      margin: "0",
+      fontFamily: fontStack,
+      fontSize: `${size}px`,
+      fontWeight: "700",
+      color: settings.textColor,
+      lineHeight: "1.4",
+      letterSpacing: `${settings.letterSpacing}px`,
+      textAlign: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "center" : "left",
+      borderLeft: isH2 && settings.h2Style === "left-border" ? `4px solid ${settings.primaryColor}` : undefined,
+      paddingLeft: isH2 && settings.h2Style === "left-border" ? "14px" : undefined,
+      paddingTop: isH2 && settings.h2Style === "divider" ? "12px" : undefined,
+      paddingBottom: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "12px" : undefined,
+      borderTop: isH2 && settings.h2Style === "divider" ? `1px solid ${hexToRgba(settings.textColor, 0.14)}` : undefined,
+      borderBottom:
+        isH2 && settings.h2Style === "divider"
+          ? `1px solid ${hexToRgba(settings.textColor, 0.14)}`
+          : isH2 && settings.h2Style === "soft-underline"
+            ? `1px solid ${hexToRgba(settings.primaryColor, 0.3)}`
+            : undefined,
+      backgroundColor: isH2 && settings.h2Style === "tag-label" ? hexToRgba(settings.primaryColor, 0.12) : undefined,
+      borderRadius: isH2 && settings.h2Style === "tag-label" ? `${settings.borderRadius}px` : undefined,
+      padding: isH2 && settings.h2Style === "tag-label" ? "8px 14px" : undefined,
+    };
+    return `<section style="margin:${tag === "h1" ? "0" : `${settings.sectionSpacing}em`} 0 0.75em;">` +
+      `<p style="${toStyleString(headingStyle)}">${prefix}`;
+  };
+  md.renderer.rules.heading_close = () => {
+    insideHeading = false;
+    return "</p></section>";
+  };
+
+  md.renderer.rules.paragraph_open = (tokens, index) => {
+    skipParagraph = isImageOnlyParagraph(tokens, index);
+    insideParagraph = !skipParagraph;
+    if (skipParagraph) return "";
+    return `<p style="${toStyleString({
+      margin: listItemDepth ? "0" : `0 0 ${settings.paragraphSpacing}em`,
+      fontFamily: fontStack,
+      fontWeight: settings.fontWeight,
+      letterSpacing: `${settings.letterSpacing}px`,
+      fontSize: `${settings.fontSize}px`,
+      lineHeight: String(settings.lineHeight),
+      color: settings.textColor,
+    })}">`;
+  };
+  md.renderer.rules.paragraph_close = () => {
+    insideParagraph = false;
+    const result = skipParagraph ? "" : "</p>";
+    skipParagraph = false;
+    return result;
+  };
+
+  md.renderer.rules.blockquote_open = () =>
+    `<section style="${toStyleString({
+      margin: `0 0 ${settings.paragraphSpacing}em`,
+      padding: "15px 18px",
+      backgroundColor: hexToRgba(settings.primaryColor, 0.075),
+      borderLeft: `4px solid ${settings.primaryColor}`,
+      borderRadius: `0 ${settings.borderRadius}px ${settings.borderRadius}px 0`,
+    })}">`;
+  md.renderer.rules.blockquote_close = () => "</section>";
+
+  md.renderer.rules.bullet_list_open = () => {
+    listStack.push({ ordered: false, index: 0 });
+    return `<section style="margin:0 0 ${settings.paragraphSpacing}em;padding-left:${settings.listIndent}em;">`;
+  };
+  md.renderer.rules.bullet_list_close = () => {
+    listStack.pop();
+    return "</section>";
+  };
+  md.renderer.rules.ordered_list_open = (tokens, index) => {
+    const start = Number(tokens[index].attrGet("start") || "1") - 1;
+    listStack.push({ ordered: true, index: start });
+    return `<section style="margin:0 0 ${settings.paragraphSpacing}em;padding-left:${settings.listIndent}em;">`;
+  };
+  md.renderer.rules.ordered_list_close = () => {
+    listStack.pop();
+    return "</section>";
+  };
+  md.renderer.rules.list_item_open = () => {
+    const current = listStack[listStack.length - 1];
+    if (current) current.index++;
+    listItemDepth++;
+    const marker = current?.ordered ? `${current.index}.` : "•";
+    return `<section style="display:flex;align-items:flex-start;margin:0 0 ${settings.listItemSpacing}em;"><span style="display:inline-block;min-width:1.5em;color:${settings.primaryColor};font-weight:700;line-height:${settings.lineHeight};">${leaf(
+      marker
+    )}</span><section style="flex:1;min-width:0;">`;
+  };
+  md.renderer.rules.list_item_close = () => {
+    listItemDepth--;
+    return "</section></section>";
+  };
+
+  md.renderer.rules.code_inline = (tokens, index) => {
+    return `<span style="${toStyleString({
+      backgroundColor: "#F1F5F9",
+      color: settings.primaryColor,
+      padding: "1px 6px",
+      borderRadius: `${Math.max(2, Math.round(settings.borderRadius / 2))}px`,
+      fontFamily: "'SF Mono',Consolas,Monaco,monospace",
+      fontSize: `${Math.round(settings.fontSize * 0.9)}px`,
+    })}">${leaf(tokens[index].content)}</span>`;
+  };
+  md.renderer.rules.code_block = (tokens, index) => {
+    insideCode = true;
+    const rendered = renderCodeBlock(tokens[index].content, "", context);
+    insideCode = false;
+    return rendered;
+  };
+  md.renderer.rules.fence = (tokens, index) => {
+    insideCode = true;
+    const language = tokens[index].info.trim().split(/\s+/)[0] || "";
+    const rendered = renderCodeBlock(tokens[index].content, language, context);
+    insideCode = false;
+    return rendered;
+  };
+
+  md.renderer.rules.link_open = (tokens, index) => {
+    const href = safeURL(tokens[index].attrGet("href") || "", "link");
+    return href
+      ? `<a href="${escapeAttribute(href)}" style="color:${settings.primaryColor};text-decoration:underline;">`
+      : `<span style="color:${settings.textColor};">`;
+  };
+  md.renderer.rules.link_close = (tokens, index, options, env, renderer) => {
+    const openIndex = tokens.slice(0, index).map((token) => token.type).lastIndexOf("link_open");
+    const href = openIndex >= 0 ? safeURL(tokens[openIndex].attrGet("href") || "", "link") : null;
+    return href ? "</a>" : "</span>";
+  };
+  md.renderer.rules.em_open = () => `<span style="font-style:italic;">`;
+  md.renderer.rules.em_close = () => "</span>";
+  md.renderer.rules.s_open = () => `<span style="text-decoration:line-through;">`;
+  md.renderer.rules.s_close = () => "</span>";
+  md.renderer.rules.strong_open = () => {
+    if (settings.boldStyle === "primary-color") return `<strong style="color:${settings.primaryColor};font-weight:700;">`;
+    if (settings.boldStyle === "highlight") return `<strong style="background:${hexToRgba(settings.primaryColor, 0.2)};padding:1px 3px;border-radius:2px;font-weight:700;">`;
+    if (settings.boldStyle === "underline") return `<strong style="border-bottom:2px solid ${hexToRgba(settings.primaryColor, 0.42)};font-weight:700;">`;
+    return `<strong style="font-weight:700;">`;
+  };
+  md.renderer.rules.strong_close = () => "</strong>";
+
+  md.renderer.rules.image = (tokens, index) => {
+    const source = tokens[index].attrGet("src") || "";
+    return renderImage(source, tokens[index].content || "", context);
+  };
+  md.renderer.rules.hr = () => `<section style="height:1px;border-top:1px solid ${hexToRgba(settings.textColor, 0.12)};margin:${settings.sectionSpacing}em 0;"></section>`;
+  md.renderer.rules.hardbreak = () => "<br>";
+  md.renderer.rules.softbreak = () => "<br>";
+
+  let tableHeader = false;
+  let tableColumnCount = 0;
+  md.renderer.rules.table_open = () => `<section style="margin:0 0 ${settings.paragraphSpacing}em;border:1px solid ${hexToRgba(settings.textColor, 0.14)};border-radius:${settings.borderRadius}px;overflow:hidden;">`;
+  md.renderer.rules.table_close = () => "</section>";
+  md.renderer.rules.thead_open = () => {
+    tableHeader = true;
+    return "";
+  };
+  md.renderer.rules.thead_close = () => {
+    tableHeader = false;
+    return "";
+  };
+  md.renderer.rules.tbody_open = () => "";
+  md.renderer.rules.tbody_close = () => "";
+  md.renderer.rules.tr_open = () => {
+    tableColumnCount = 0;
+    return `<section style="display:flex;align-items:stretch;border-bottom:1px solid ${hexToRgba(settings.textColor, 0.1)};">`;
+  };
+  md.renderer.rules.tr_close = () => "</section>";
+  const cellOpen = () => {
+    tableColumnCount++;
+    return `<section style="flex:1;min-width:0;padding:9px 10px;border-right:1px solid ${hexToRgba(settings.textColor, 0.1)};background:${
+      tableHeader ? hexToRgba(settings.primaryColor, 0.12) : settings.backgroundColor
+    };font-size:${Math.max(12, Math.round(settings.fontSize * 0.9))}px;line-height:1.6;overflow-wrap:anywhere;${
+      tableHeader ? "font-weight:700;" : ""
+    }">`;
+  };
+  md.renderer.rules.th_open = cellOpen;
+  md.renderer.rules.th_close = () => "</section>";
+  md.renderer.rules.td_open = cellOpen;
+  md.renderer.rules.td_close = () => "</section>";
+
+  const body = md.render(markdown);
+  return body;
+}
+
+export function compileWechatArticle(
+  markdown: string,
+  settingsInput: StyleSettings,
+  mode: "preview" | "export" = "preview",
+  options: RenderOptions = {}
+): RenderResult {
+  const settings = normalizeSettings(settingsInput);
+  const analysis = options.analysis || analyzeArticle(markdown);
+  const smart = options.smart;
+  const fontStack = getFontStack(settings.fontFamily, mode);
+  const articleType: ArticleType = smart?.articleType && smart.articleType !== "auto" ? smart.articleType : analysis.articleType;
+  const context: ThemeComponentContext = { settings, fontStack, articleType };
+  const source = smart?.enabled ? stripSmartDecorations(markdown, analysis, smart) : markdown;
+  const acceptedKeywordIds = options.acceptedKeywordIds || [];
+  let content = "";
+  if (smart?.enabled) {
+    content += renderArticleTitle(analysis.title, context);
+    if (smart.showIntro && analysis.intro) content += renderIntroCard(analysis.intro, context);
+    if (smart.showToc && analysis.toc.length >= 1) content += renderToc(analysis.toc, context);
+  }
+  content += buildRenderer(source, settings, mode, context, smart, analysis, acceptedKeywordIds);
+  const hasSignature = /(我是.{1,20}[，,]|(?:作者|撰文|文)[：:]|点赞|在看|转发|下篇见)/.test(markdown.slice(-500));
+  if (smart?.enabled && smart.showSignature && !hasSignature) {
+    content += renderSignature(smart.authorName, smart.authorBio, context);
+  }
+  const html = `<section style="${toStyleString({
+    backgroundColor: settings.backgroundColor,
+    padding: "32px 24px",
+    fontFamily: fontStack,
+    fontWeight: settings.fontWeight,
+    letterSpacing: `${settings.letterSpacing}px`,
+    maxWidth: `${settings.contentWidth}px`,
+    margin: "0 auto",
+    minHeight: "100%",
+  })}">${content}</section>`;
+  return {
+    html,
+    plainText: plainTextFromMarkdown(markdown),
+    analysis,
+    validation: validateWechatHTML(html),
+  };
 }
 
 export function renderMarkdown(
   markdown: string,
   settings: StyleSettings,
-  mode: "preview" | "export" = "preview"
+  mode: "preview" | "export" = "preview",
+  options: RenderOptions = {}
 ): string {
-  const md = new MarkdownIt({
-    html: true,
-    linkify: true,
-    typographer: true,
-    breaks: true,
-  });
-
-  const {
-    primaryColor,
-    textColor,
-    fontSize,
-    lineHeight,
-    headingFontSize,
-    borderRadius,
-    backgroundColor,
-    h2Style,
-    boldStyle,
-    paragraphSpacing,
-    sectionSpacing,
-    listIndent,
-    listItemSpacing,
-    fontFamily,
-    letterSpacing,
-    fontWeight,
-  } = settings;
-
-  const fontStack = getFontStack(fontFamily, mode);
-  const ls = `${letterSpacing}px`;
-
-  const bodyFontStyle = toStyleString({
-    fontFamily: fontStack,
-    fontWeight,
-    letterSpacing: ls,
-  });
-
-  const headingSizes: Record<string, number> = {
-    h1: headingFontSize,
-    h2: Math.round(headingFontSize * 0.85),
-    h3: Math.round(headingFontSize * 0.72),
-    h4: Math.round(headingFontSize * 0.62),
-  };
-
-  let h2Counter = 0;
-
-  md.renderer.rules.heading_open = (tokens, idx) => {
-    const tag = tokens[idx].tag;
-    const size = headingSizes[tag] || headingFontSize;
-
-    if (tag === "h2") {
-      h2Counter++;
-      const num = String(h2Counter).padStart(2, "0");
-
-      switch (h2Style) {
-        case "left-border":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "700",
-            color: textColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.6em",
-            lineHeight: "1.3",
-            borderLeft: `4px solid ${primaryColor}`,
-            paddingLeft: "16px",
-          })}">`;
-
-        case "tag-label":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "700",
-            color: textColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.6em",
-            lineHeight: "1.3",
-            backgroundColor: hexToRgba(primaryColor, 0.15),
-            padding: "8px 16px",
-            borderRadius: "4px",
-          })}">`;
-
-        case "numbered":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "700",
-            color: textColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.6em",
-            lineHeight: "1.3",
-          })}"><span style="${toStyleString({
-            color: primaryColor,
-            fontSize: `${Math.round(size * 0.85)}px`,
-            marginRight: "10px",
-            fontWeight: "600",
-          })}">${num}</span>`;
-
-        case "divider":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "700",
-            color: textColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.8em",
-            lineHeight: "1.3",
-            textAlign: "center",
-            paddingTop: "14px",
-            paddingBottom: "14px",
-            borderTop: `1px solid ${hexToRgba(textColor, 0.15)}`,
-            borderBottom: `1px solid ${hexToRgba(textColor, 0.15)}`,
-          })}">`;
-
-        case "soft-underline":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "500",
-            color: primaryColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.8em",
-            lineHeight: "1.4",
-            textAlign: "center",
-            paddingBottom: "12px",
-            borderBottom: `1px solid ${hexToRgba(primaryColor, 0.25)}`,
-          })}">`;
-
-        case "plain":
-          return `<h2 style="${toStyleString({
-            fontFamily: fontStack,
-            letterSpacing: ls,
-            fontSize: `${size}px`,
-            fontWeight: "700",
-            color: textColor,
-            marginTop: `${sectionSpacing}em`,
-            marginBottom: "0.6em",
-            lineHeight: "1.3",
-          })}">`;
-      }
-    }
-
-    // h1, h3, h4
-    return `<${tag} style="${toStyleString({
-      fontFamily: fontStack,
-      letterSpacing: ls,
-      fontSize: `${size}px`,
-      fontWeight: "700",
-      color: textColor,
-      marginTop: tag === "h1" ? "0" : `${sectionSpacing}em`,
-      marginBottom: "0.6em",
-      lineHeight: "1.3",
-    })}">`;
-  };
-
-  md.renderer.rules.heading_close = (tokens, idx) => {
-    return `</${tokens[idx].tag}>`;
-  };
-
-  md.renderer.rules.paragraph_open = () => {
-    return `<p style="${toStyleString({
-      fontFamily: fontStack,
-      fontWeight,
-      letterSpacing: ls,
-      fontSize: `${fontSize}px`,
-      lineHeight: String(lineHeight),
-      color: textColor,
-      marginBottom: `${paragraphSpacing}em`,
-      marginTop: "0",
-    })}">`;
-  };
-
-  md.renderer.rules.paragraph_close = () => "</p>";
-
-  md.renderer.rules.blockquote_open = () => {
-    return `<blockquote style="${toStyleString({
-      fontFamily: fontStack,
-      fontWeight,
-      letterSpacing: ls,
-      borderLeft: `3px solid ${hexToRgba(primaryColor, 0.5)}`,
-      marginLeft: "0",
-      marginRight: "0",
-      marginTop: `${paragraphSpacing}em`,
-      marginBottom: `${paragraphSpacing}em`,
-      backgroundColor: hexToRgba(primaryColor, 0.08),
-      padding: "16px 20px",
-      borderRadius: `${borderRadius}px`,
-      fontSize: `${Math.round(fontSize * 0.95)}px`,
-      lineHeight: String(lineHeight),
-      color: textColor,
-    })}">`;
-  };
-
-  md.renderer.rules.blockquote_close = () => "</blockquote>";
-
-  md.renderer.rules.list_item_open = () => {
-    return `<li style="${toStyleString({
-      fontFamily: fontStack,
-      fontWeight,
-      letterSpacing: ls,
-      fontSize: `${fontSize}px`,
-      lineHeight: String(lineHeight),
-      color: textColor,
-      marginBottom: `${listItemSpacing}em`,
-    })}">`;
-  };
-
-  md.renderer.rules.list_item_close = () => "</li>";
-
-  md.renderer.rules.bullet_list_open = () => {
-    return `<ul style="${toStyleString({
-      paddingLeft: `${listIndent}em`,
-      marginTop: "0.4em",
-      marginBottom: `${paragraphSpacing}em`,
-    })}">`;
-  };
-
-  md.renderer.rules.bullet_list_close = () => "</ul>";
-
-  md.renderer.rules.ordered_list_open = () => {
-    return `<ol style="${toStyleString({
-      paddingLeft: `${listIndent}em`,
-      marginTop: "0.4em",
-      marginBottom: `${paragraphSpacing}em`,
-    })}">`;
-  };
-
-  md.renderer.rules.ordered_list_close = () => "</ol>";
-
-  md.renderer.rules.code_inline = (tokens, idx) => {
-    const content = md.utils.escapeHtml(tokens[idx].content);
-    return `<code style="${toStyleString({
-      backgroundColor: hexToRgba(primaryColor, 0.12),
-      color: textColor,
-      padding: "2px 6px",
-      borderRadius: `${Math.round(borderRadius / 2)}px`,
-      fontSize: `${Math.round(fontSize * 0.9)}px`,
-      fontFamily:
-        "Menlo, Monaco, 'Courier New', monospace",
-    })}">${content}</code>`;
-  };
-
-  const codeBlockStyle = toStyleString({
-    backgroundColor: "#F5F5F0",
-    padding: "20px",
-    borderRadius: `${borderRadius}px`,
-    overflow: "auto",
-    fontSize: `${Math.round(fontSize * 0.88)}px`,
-    lineHeight: "1.6",
-    color: textColor,
-    marginTop: `${paragraphSpacing}em`,
-    marginBottom: `${paragraphSpacing}em`,
-  });
-
-  const monoFont = "Menlo, Monaco, 'Courier New', monospace";
-
-  md.renderer.rules.code_block = (tokens, idx) => {
-    const content = md.utils.escapeHtml(tokens[idx].content);
-    return `<pre style="${codeBlockStyle}"><code style="font-family: ${monoFont};">${content}</code></pre>`;
-  };
-
-  md.renderer.rules.fence = (tokens, idx) => {
-    const content = md.utils.escapeHtml(tokens[idx].content);
-    return `<pre style="${codeBlockStyle}"><code style="font-family: ${monoFont};">${content}</code></pre>`;
-  };
-
-  md.renderer.rules.link_open = (tokens, idx) => {
-    const href = tokens[idx].attrGet("href") || "";
-    return `<a href="${href}" style="${toStyleString({
-      color: primaryColor,
-      textDecoration: "underline",
-    })}">`;
-  };
-
-  md.renderer.rules.link_close = () => "</a>";
-
-  md.renderer.rules.em_open = () => "<em>";
-  md.renderer.rules.em_close = () => "</em>";
-
-  md.renderer.rules.strong_open = () => {
-    switch (boldStyle) {
-      case "primary-color":
-        return `<strong style="color: ${primaryColor};">`;
-      case "highlight":
-        return `<strong style="${toStyleString({
-          backgroundColor: hexToRgba(primaryColor, 0.2),
-          padding: "2px 4px",
-          borderRadius: "2px",
-          fontWeight: "600",
-        })}">`;
-      case "underline":
-        return `<strong style="text-decoration: underline; text-underline-offset: 4px;">`;
-      default:
-        return "<strong>";
-    }
-  };
-
-  md.renderer.rules.strong_close = () => "</strong>";
-
-  let tableRowIndex = 0;
-
-  md.renderer.rules.table_open = () => {
-    tableRowIndex = 0;
-    return `<section style="${toStyleString({
-      marginTop: `${paragraphSpacing}em`,
-      marginBottom: `${paragraphSpacing}em`,
-      overflowX: "auto",
-      borderRadius: `${borderRadius}px`,
-      border: `1px solid ${hexToRgba(textColor, 0.14)}`,
-    })}"><table style="${toStyleString({
-      width: "100%",
-      minWidth: "100%",
-      borderCollapse: "collapse",
-      tableLayout: "fixed",
-      fontFamily: fontStack,
-      fontWeight,
-      letterSpacing: ls,
-      fontSize: `${Math.round(fontSize * 0.92)}px`,
-      lineHeight: "1.6",
-      color: textColor,
-      backgroundColor,
-    })}">`;
-  };
-
-  md.renderer.rules.table_close = () => "</table></section>";
-
-  md.renderer.rules.tr_open = () => {
-    const background =
-      tableRowIndex % 2 === 0
-        ? backgroundColor
-        : hexToRgba(primaryColor, 0.045);
-    tableRowIndex++;
-    return `<tr style="background-color: ${background};">`;
-  };
-
-  md.renderer.rules.th_open = () => {
-    return `<th style="${toStyleString({
-      padding: "10px 12px",
-      borderRight: `1px solid ${hexToRgba(textColor, 0.12)}`,
-      borderBottom: `1px solid ${hexToRgba(textColor, 0.16)}`,
-      backgroundColor: hexToRgba(primaryColor, 0.14),
-      color: textColor,
-      fontWeight: "700",
-      textAlign: "left",
-      verticalAlign: "top",
-      overflowWrap: "anywhere",
-      wordBreak: "break-word",
-    })}">`;
-  };
-
-  md.renderer.rules.td_open = () => {
-    return `<td style="${toStyleString({
-      padding: "10px 12px",
-      borderRight: `1px solid ${hexToRgba(textColor, 0.1)}`,
-      borderBottom: `1px solid ${hexToRgba(textColor, 0.1)}`,
-      textAlign: "left",
-      verticalAlign: "top",
-      overflowWrap: "anywhere",
-      wordBreak: "break-word",
-    })}">`;
-  };
-
-  md.renderer.rules.hr = () => {
-    return `<hr style="${toStyleString({
-      border: "none",
-      borderTop: `1px solid ${hexToRgba(textColor, 0.1)}`,
-      marginTop: `${sectionSpacing}em`,
-      marginBottom: `${sectionSpacing}em`,
-    })}" />`;
-  };
-
-  md.renderer.rules.image = (tokens, idx) => {
-    const token = tokens[idx];
-    const src = token.attrGet("src") || "";
-    const alt = token.content;
-    return `<figure style="margin: ${paragraphSpacing}em 0; text-align: center;">
-      <img src="${src}" alt="${md.utils.escapeHtml(alt)}" style="max-width: 100%; border-radius: ${borderRadius}px; display: block; margin: 0 auto;" />
-      ${alt ? `<figcaption style="font-size: ${Math.round(fontSize * 0.85)}px; color: ${hexToRgba(textColor, 0.5)}; margin-top: 0.6em; font-family: ${fontStack}; letter-spacing: ${ls};">${md.utils.escapeHtml(alt)}</figcaption>` : ""}
-    </figure>`;
-  };
-
-  md.renderer.rules.hardbreak = () => "<br />";
-  md.renderer.rules.softbreak = () => "\n";
-
-  const html = md.render(markdown);
-
-  return `<section style="${toStyleString({
-    backgroundColor,
-    padding: "32px 24px",
-    fontFamily: fontStack,
-    fontWeight,
-    letterSpacing: ls,
-    maxWidth: `${settings.contentWidth}px`,
-    margin: "0 auto",
-    minHeight: "100%",
-  })}">${html}</section>`;
+  return compileWechatArticle(markdown, settings, mode, options).html;
 }
 
-export function wrapExportHTML(
-  bodyHTML: string,
-  settings: StyleSettings
-): string {
+export function wrapExportHTML(bodyHTML: string, settings: StyleSettings): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -438,7 +441,7 @@ export function wrapExportHTML(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MD Studio Export</title>
 </head>
-<body style="margin: 0; background: #E8E8E0; display: flex; justify-content: center; padding: 40px 0;">
+<body style="margin:0;background:#E8E8E0;display:flex;justify-content:center;padding:40px 0;">
   ${bodyHTML}
 </body>
 </html>`;

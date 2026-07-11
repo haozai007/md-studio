@@ -14,6 +14,7 @@ import { FontFamily, FontWeight, fontOptions } from "@/lib/fonts";
 interface StylePanelProps {
   settings: StyleSettings;
   onChange: (settings: StyleSettings) => void;
+  embedded?: boolean;
 }
 
 function SliderControl({
@@ -98,7 +99,7 @@ const boldStyleOptions: { value: BoldStyle; label: string }[] = [
   { value: "underline", label: "下划线强调" },
 ];
 
-export default function StylePanel({ settings, onChange }: StylePanelProps) {
+export default function StylePanel({ settings, onChange, embedded = false }: StylePanelProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
   const update = (patch: Partial<StyleSettings>) =>
@@ -110,11 +111,13 @@ export default function StylePanel({ settings, onChange }: StylePanelProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-warm-200 shrink-0">
-        <span className="text-xs font-semibold uppercase tracking-wider text-ink/40">
-          样式设置
-        </span>
-      </div>
+      {!embedded && (
+        <div className="px-4 py-3 border-b border-warm-200 shrink-0">
+          <span className="text-xs font-semibold uppercase tracking-wider text-ink/40">
+            样式设置
+          </span>
+        </div>
+      )}
 
       <div className="flex-1 overflow-auto p-4 space-y-6">
         {/* Theme selector */}

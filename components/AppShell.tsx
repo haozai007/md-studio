@@ -21,7 +21,7 @@ export default function AppShell({
           {editor}
         </aside>
         <main className="flex-1 flex flex-col min-w-0">{preview}</main>
-        <aside className="w-[280px] shrink-0 border-l border-warm-200 bg-white flex flex-col">
+        <aside className="w-[320px] shrink-0 border-l border-warm-200 bg-white flex flex-col">
           {stylePanel}
         </aside>
       </div>

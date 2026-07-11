@@ -3,6 +3,17 @@ import { FontFamily, FontWeight } from "./fonts";
 export type ThemeName = "supo-minimal" | "ai-project" | "design-case" | "light-note-blue";
 export type H2Style = "left-border" | "tag-label" | "numbered" | "divider" | "plain" | "soft-underline";
 export type BoldStyle = "bold-only" | "primary-color" | "highlight" | "underline";
+export type IntroStyle = "card" | "editorial" | "minimal";
+export type TocStyle = "numbered" | "compact";
+export type CodeStyle = "dark" | "light";
+
+export interface ThemeRecipe {
+  description: string;
+  introStyle: IntroStyle;
+  tocStyle: TocStyle;
+  codeStyle: CodeStyle;
+  underlineWidth: number;
+}
 
 export interface StyleSettings {
   theme: ThemeName;
@@ -45,6 +56,7 @@ export interface ThemePreset {
   fontFamily: FontFamily;
   letterSpacing: number;
   fontWeight: FontWeight;
+  recipe: ThemeRecipe;
 }
 
 export const themePresets: Record<ThemeName, ThemePreset> = {
@@ -68,6 +80,13 @@ export const themePresets: Record<ThemeName, ThemePreset> = {
     fontFamily: "optima-light",
     letterSpacing: 0.5,
     fontWeight: "300",
+    recipe: {
+      description: "适合清单、工具盘点和高信息密度教程",
+      introStyle: "card",
+      tocStyle: "numbered",
+      codeStyle: "dark",
+      underlineWidth: 2,
+    },
   },
   "ai-project": {
     name: "ai-project",
@@ -89,6 +108,13 @@ export const themePresets: Record<ThemeName, ThemePreset> = {
     fontFamily: "optima-light",
     letterSpacing: 0.3,
     fontWeight: "400",
+    recipe: {
+      description: "适合技术教程、项目实战和数据型内容",
+      introStyle: "card",
+      tocStyle: "numbered",
+      codeStyle: "dark",
+      underlineWidth: 2,
+    },
   },
   "light-note-blue": {
     name: "light-note-blue",
@@ -110,6 +136,13 @@ export const themePresets: Record<ThemeName, ThemePreset> = {
     fontFamily: "optima-light",
     letterSpacing: 0.4,
     fontWeight: "300",
+    recipe: {
+      description: "适合随笔、故事和轻量知识笔记",
+      introStyle: "minimal",
+      tocStyle: "compact",
+      codeStyle: "light",
+      underlineWidth: 1.5,
+    },
   },
   "design-case": {
     name: "design-case",
@@ -131,6 +164,13 @@ export const themePresets: Record<ThemeName, ThemePreset> = {
     fontFamily: "optima-light",
     letterSpacing: 0.8,
     fontWeight: "300",
+    recipe: {
+      description: "适合观点分析、案例复盘和视觉内容",
+      introStyle: "editorial",
+      tocStyle: "compact",
+      codeStyle: "light",
+      underlineWidth: 2,
+    },
   },
 };
 
