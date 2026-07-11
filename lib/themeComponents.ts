@@ -1,14 +1,13 @@
-import { ArticleHeading, ArticleType } from "./articleTypes";
+import { ArticleHeading } from "./articleTypes";
 import { escapeAttribute, hexToRgba, leaf, safeURL, toStyleString } from "./htmlUtils";
-import { StyleSettings, themePresets } from "./themeConfig";
+import { getTheme } from "./themes/registry";
+import { createConfiguredRenderers } from "./themes/configuredRenderers";
+import { resolveThemeModules } from "./themes/modules";
+import type { HeadingRenderInput, ThemeComponentContext, ThemeRenderers } from "./themes/types";
 
-export interface ThemeComponentContext {
-  settings: StyleSettings;
-  fontStack: string;
-  articleType: ArticleType;
-}
+export type { ThemeComponentContext } from "./themes/types";
 
-export function renderArticleTitle(title: string, context: ThemeComponentContext): string {
+function defaultArticleTitle(title: string, context: ThemeComponentContext): string {
   if (!title) return "";
   const { settings, fontStack } = context;
   return `<section style="${toStyleString({
@@ -26,10 +25,10 @@ export function renderArticleTitle(title: string, context: ThemeComponentContext
   })}">${leaf(title)}</p></section>`;
 }
 
-export function renderIntroCard(intro: string, context: ThemeComponentContext): string {
+function defaultIntro(intro: string, context: ThemeComponentContext): string {
   if (!intro) return "";
   const { settings, fontStack } = context;
-  const recipe = themePresets[settings.theme].recipe;
+  const recipe = getTheme(settings.theme).recipe;
   const shared = {
     margin: "0 0 26px",
     padding: recipe.introStyle === "minimal" ? "18px 4px" : "18px 20px",
@@ -69,10 +68,10 @@ export function renderIntroCard(intro: string, context: ThemeComponentContext): 
   return `<section style="${toStyleString(shared)}">${paragraphs}</section>`;
 }
 
-export function renderToc(headings: ArticleHeading[], context: ThemeComponentContext): string {
+function defaultToc(headings: ArticleHeading[], context: ThemeComponentContext): string {
   if (!headings.length) return "";
   const { settings, fontStack } = context;
-  const recipe = themePresets[settings.theme].recipe;
+  const recipe = getTheme(settings.theme).recipe;
   const items = headings
     .slice(0, 3)
     .map((heading, index) => {
@@ -113,7 +112,7 @@ export function renderCodeBlock(
   context: ThemeComponentContext
 ): string {
   const { settings } = context;
-  const dark = themePresets[settings.theme].recipe.codeStyle === "dark";
+  const dark = getTheme(settings.theme).recipe.codeStyle === "dark";
   const background = dark ? "#1E293B" : "#F6F8FA";
   const toolbar = dark ? "#0F172A" : "#EEF1F4";
   const text = dark ? "#E2E8F0" : "#24292F";
@@ -147,7 +146,7 @@ export function renderCodeBlock(
   )}</span></section><section style="padding:11px 14px;">${renderedLines}</section></section>`;
 }
 
-export function renderImage(
+function defaultImage(
   source: string,
   alt: string,
   context: ThemeComponentContext
@@ -186,7 +185,7 @@ export function renderImage(
   )}" alt="${escapeAttribute(alt)}" style="max-width:100%;height:auto;display:block;margin:0 auto;"></span></section></section>${caption}`;
 }
 
-export function renderSignature(
+function defaultSignature(
   authorName: string,
   authorBio: string,
   context: ThemeComponentContext
@@ -214,3 +213,81 @@ export function renderSignature(
     lineHeight: "1.75",
   })}">${leaf("如果你觉得今天这篇有收获，欢迎点赞、在看、转发，我们下篇见。")}</p></section>`;
 }
+
+function defaultHeadingOpen(input: HeadingRenderInput, context: ThemeComponentContext): string {
+  const { settings, fontStack } = context;
+  const { tag, size, isH2, prefix } = input;
+  const headingStyle: Record<string, string | number | undefined> = {
+    margin: "0",
+    fontFamily: fontStack,
+    fontSize: `${size}px`,
+    fontWeight: "700",
+    color: settings.textColor,
+    lineHeight: "1.4",
+    letterSpacing: `${settings.letterSpacing}px`,
+    textAlign: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "center" : "left",
+    borderLeft: isH2 && settings.h2Style === "left-border" ? `4px solid ${settings.primaryColor}` : undefined,
+    paddingLeft: isH2 && settings.h2Style === "left-border" ? "14px" : undefined,
+    paddingTop: isH2 && settings.h2Style === "divider" ? "12px" : undefined,
+    paddingBottom: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "12px" : undefined,
+    borderTop: isH2 && settings.h2Style === "divider" ? `1px solid ${hexToRgba(settings.textColor, 0.14)}` : undefined,
+    borderBottom:
+      isH2 && settings.h2Style === "divider"
+        ? `1px solid ${hexToRgba(settings.textColor, 0.14)}`
+        : isH2 && settings.h2Style === "soft-underline"
+          ? `1px solid ${hexToRgba(settings.primaryColor, 0.3)}`
+          : undefined,
+    backgroundColor: isH2 && settings.h2Style === "tag-label" ? hexToRgba(settings.primaryColor, 0.12) : undefined,
+    borderRadius: isH2 && settings.h2Style === "tag-label" ? `${settings.borderRadius}px` : undefined,
+    padding: isH2 && settings.h2Style === "tag-label" ? "8px 14px" : undefined,
+  };
+  return `<section style="margin:${tag === "h1" ? "0" : `${settings.sectionSpacing}em`} 0 0.75em;"><p style="${toStyleString(headingStyle)}">${prefix}`;
+}
+
+function defaultHeadingClose(): string {
+  return "</p></section>";
+}
+
+function defaultBlockquoteOpen(context: ThemeComponentContext): string {
+  const { settings } = context;
+  return `<section style="${toStyleString({
+    margin: `0 0 ${settings.paragraphSpacing}em`,
+    padding: "15px 18px",
+    backgroundColor: hexToRgba(settings.primaryColor, 0.075),
+    borderLeft: `4px solid ${settings.primaryColor}`,
+    borderRadius: `0 ${settings.borderRadius}px ${settings.borderRadius}px 0`,
+  })}">`;
+}
+
+function defaultBlockquoteClose(): string {
+  return "</section>";
+}
+
+export const defaultThemeRenderers: ThemeRenderers = {
+  articleTitle: defaultArticleTitle,
+  intro: defaultIntro,
+  toc: defaultToc,
+  headingOpen: defaultHeadingOpen,
+  headingClose: defaultHeadingClose,
+  blockquoteOpen: defaultBlockquoteOpen,
+  blockquoteClose: defaultBlockquoteClose,
+  image: defaultImage,
+  signature: defaultSignature,
+};
+
+export function getThemeRenderers(context: ThemeComponentContext): ThemeRenderers {
+  const theme = getTheme(context.settings.theme);
+  const modules = resolveThemeModules(context.settings.theme, context.settings.moduleVariants);
+  return { ...defaultThemeRenderers, ...theme.renderers, ...createConfiguredRenderers(modules) };
+}
+
+export const renderArticleTitle = (title: string, context: ThemeComponentContext) =>
+  getThemeRenderers(context).articleTitle(title, context);
+export const renderIntroCard = (intro: string, context: ThemeComponentContext) =>
+  getThemeRenderers(context).intro(intro, context);
+export const renderToc = (headings: ArticleHeading[], context: ThemeComponentContext) =>
+  getThemeRenderers(context).toc(headings, context);
+export const renderImage = (source: string, alt: string, context: ThemeComponentContext) =>
+  getThemeRenderers(context).image(source, alt, context);
+export const renderSignature = (authorName: string, authorBio: string, context: ThemeComponentContext) =>
+  getThemeRenderers(context).signature(authorName, authorBio, context);

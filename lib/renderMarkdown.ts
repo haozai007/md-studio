@@ -18,9 +18,11 @@ import {
   renderIntroCard,
   renderSignature,
   renderToc,
+  getThemeRenderers,
   ThemeComponentContext,
 } from "./themeComponents";
-import { StyleSettings, themePresets } from "./themeConfig";
+import { StyleSettings } from "./themeConfig";
+import { getTheme, getThemeOrDefault, isThemeName } from "./themes/registry";
 import { validateWechatHTML, ValidationReport } from "./wechatValidator";
 
 export interface RenderOptions {
@@ -37,13 +39,13 @@ export interface RenderResult {
 }
 
 function normalizeSettings(settings: StyleSettings): StyleSettings {
-  const fallback = themePresets[settings.theme] || themePresets["supo-minimal"];
+  const fallback = getThemeOrDefault(settings.theme);
   const color = (value: string, defaultValue: string) =>
     /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : defaultValue;
   return {
     ...fallback,
     ...settings,
-    theme: themePresets[settings.theme] ? settings.theme : "supo-minimal",
+    theme: isThemeName(settings.theme) ? settings.theme : "supo-minimal",
     primaryColor: color(settings.primaryColor, fallback.primaryColor),
     backgroundColor: color(settings.backgroundColor, fallback.backgroundColor),
     textColor: color(settings.textColor, fallback.textColor),
@@ -59,6 +61,7 @@ function normalizeSettings(settings: StyleSettings): StyleSettings {
     letterSpacing: clamp(settings.letterSpacing, 0, 2),
     fontFamily: fontOptions[settings.fontFamily] ? settings.fontFamily : fallback.fontFamily,
     fontWeight: settings.fontWeight === "300" ? "300" : "400",
+    moduleVariants: settings.moduleVariants || {},
   };
 }
 
@@ -153,8 +156,9 @@ function buildRenderer(
   const acceptedPhrases = analysis.keywordCandidates
     .filter((candidate) => acceptedKeywordIds.includes(candidate.id))
     .map((candidate) => candidate.phrase);
-  const underlineWidth = themePresets[settings.theme].recipe.underlineWidth;
+  const underlineWidth = getTheme(settings.theme).recipe.underlineWidth;
   const effectiveType: ArticleType = smart?.articleType && smart.articleType !== "auto" ? smart.articleType : analysis.articleType;
+  const themeRenderers = getThemeRenderers(context);
   let h2Counter = 0;
   let insideParagraph = false;
   let insideHeading = false;
@@ -196,36 +200,11 @@ function buildRenderer(
         )}</span>`;
       }
     }
-    const headingStyle: Record<string, string | number | undefined> = {
-      margin: "0",
-      fontFamily: fontStack,
-      fontSize: `${size}px`,
-      fontWeight: "700",
-      color: settings.textColor,
-      lineHeight: "1.4",
-      letterSpacing: `${settings.letterSpacing}px`,
-      textAlign: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "center" : "left",
-      borderLeft: isH2 && settings.h2Style === "left-border" ? `4px solid ${settings.primaryColor}` : undefined,
-      paddingLeft: isH2 && settings.h2Style === "left-border" ? "14px" : undefined,
-      paddingTop: isH2 && settings.h2Style === "divider" ? "12px" : undefined,
-      paddingBottom: isH2 && ["divider", "soft-underline"].includes(settings.h2Style) ? "12px" : undefined,
-      borderTop: isH2 && settings.h2Style === "divider" ? `1px solid ${hexToRgba(settings.textColor, 0.14)}` : undefined,
-      borderBottom:
-        isH2 && settings.h2Style === "divider"
-          ? `1px solid ${hexToRgba(settings.textColor, 0.14)}`
-          : isH2 && settings.h2Style === "soft-underline"
-            ? `1px solid ${hexToRgba(settings.primaryColor, 0.3)}`
-            : undefined,
-      backgroundColor: isH2 && settings.h2Style === "tag-label" ? hexToRgba(settings.primaryColor, 0.12) : undefined,
-      borderRadius: isH2 && settings.h2Style === "tag-label" ? `${settings.borderRadius}px` : undefined,
-      padding: isH2 && settings.h2Style === "tag-label" ? "8px 14px" : undefined,
-    };
-    return `<section style="margin:${tag === "h1" ? "0" : `${settings.sectionSpacing}em`} 0 0.75em;">` +
-      `<p style="${toStyleString(headingStyle)}">${prefix}`;
+    return themeRenderers.headingOpen({ tag, size, title, isH2, isConclusion, prefix }, context);
   };
   md.renderer.rules.heading_close = () => {
     insideHeading = false;
-    return "</p></section>";
+    return themeRenderers.headingClose(context);
   };
 
   md.renderer.rules.paragraph_open = (tokens, index) => {
@@ -249,15 +228,8 @@ function buildRenderer(
     return result;
   };
 
-  md.renderer.rules.blockquote_open = () =>
-    `<section style="${toStyleString({
-      margin: `0 0 ${settings.paragraphSpacing}em`,
-      padding: "15px 18px",
-      backgroundColor: hexToRgba(settings.primaryColor, 0.075),
-      borderLeft: `4px solid ${settings.primaryColor}`,
-      borderRadius: `0 ${settings.borderRadius}px ${settings.borderRadius}px 0`,
-    })}">`;
-  md.renderer.rules.blockquote_close = () => "</section>";
+  md.renderer.rules.blockquote_open = () => themeRenderers.blockquoteOpen(context);
+  md.renderer.rules.blockquote_close = () => themeRenderers.blockquoteClose(context);
 
   md.renderer.rules.bullet_list_open = () => {
     listStack.push({ ordered: false, index: 0 });

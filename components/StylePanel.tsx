@@ -4,12 +4,13 @@ import React from "react";
 import {
   StyleSettings,
   ThemeName,
-  H2Style,
   BoldStyle,
-  themePresets,
   applyThemePreset,
 } from "@/lib/themeConfig";
 import { FontFamily, FontWeight, fontOptions } from "@/lib/fonts";
+import { listThemes } from "@/lib/themes/registry";
+import { listModuleVariants, themeModuleLabels } from "@/lib/themes/modules";
+import type { ThemeModuleName } from "@/lib/themes/types";
 
 interface StylePanelProps {
   settings: StyleSettings;
@@ -83,15 +84,6 @@ function ColorControl({
   );
 }
 
-const h2StyleOptions: { value: H2Style; label: string }[] = [
-  { value: "left-border", label: "左侧竖线" },
-  { value: "tag-label", label: "底色标签" },
-  { value: "numbered", label: "编号标题" },
-  { value: "divider", label: "上下分隔线" },
-  { value: "soft-underline", label: "浅色底线" },
-  { value: "plain", label: "纯文本" },
-];
-
 const boldStyleOptions: { value: BoldStyle; label: string }[] = [
   { value: "bold-only", label: "仅加粗" },
   { value: "primary-color", label: "主色文字" },
@@ -101,12 +93,17 @@ const boldStyleOptions: { value: BoldStyle; label: string }[] = [
 
 export default function StylePanel({ settings, onChange, embedded = false }: StylePanelProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [modulesOpen, setModulesOpen] = React.useState(true);
 
   const update = (patch: Partial<StyleSettings>) =>
     onChange({ ...settings, ...patch });
 
   const handleThemeChange = (theme: ThemeName) => {
     onChange(applyThemePreset(settings, theme));
+  };
+
+  const updateModuleVariant = (module: ThemeModuleName, variant: string) => {
+    update({ moduleVariants: { ...settings.moduleVariants, [module]: variant } });
   };
 
   return (
@@ -124,13 +121,13 @@ export default function StylePanel({ settings, onChange, embedded = false }: Sty
         <div className="space-y-2">
           <label className="text-xs text-ink/50">主题选择</label>
           <div className="space-y-1.5">
-            {(Object.entries(themePresets) as [ThemeName, typeof themePresets[ThemeName]][]).map(
-              ([key, preset]) => (
+            {listThemes().map(
+              (preset) => (
                 <button
-                  key={key}
-                  onClick={() => handleThemeChange(key)}
+                  key={preset.name}
+                  onClick={() => handleThemeChange(preset.name)}
                   className={`w-full text-left px-3 py-2 rounded-md text-sm transition-all border ${
-                    settings.theme === key
+                    settings.theme === preset.name
                       ? "border-ink/20 bg-ink/5 text-ink font-medium"
                       : "border-transparent text-ink/50 hover:bg-warm-200/50"
                   }`}
@@ -146,6 +143,49 @@ export default function StylePanel({ settings, onChange, embedded = false }: Sty
               )
             )}
           </div>
+        </div>
+
+        <hr className="border-warm-200" />
+
+        {/* Theme modules */}
+        <div>
+          <button
+            onClick={() => setModulesOpen(!modulesOpen)}
+            className="w-full flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-ink/40 hover:text-ink/60 transition-colors"
+          >
+            <span>版面模块</span>
+            <span className="text-xs transition-transform" style={{ transform: modulesOpen ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
+          </button>
+          {modulesOpen && (
+            <div className="mt-4 space-y-3">
+              {(Object.keys(themeModuleLabels) as ThemeModuleName[]).map((module) => {
+                const theme = listThemes().find((item) => item.name === settings.theme)!;
+                const current = settings.moduleVariants[module] || theme.modules[module].variant;
+                return (
+                  <label key={module} className="block space-y-1.5">
+                    <span className="text-xs text-ink/50">{themeModuleLabels[module]}</span>
+                    <select
+                      value={current}
+                      onChange={(event) => updateModuleVariant(module, event.target.value)}
+                      className="w-full rounded-md border border-warm-200 bg-white px-2.5 py-2 text-xs text-ink/70 outline-none focus:border-ink/30"
+                    >
+                      {listModuleVariants(module).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              })}
+              {Object.keys(settings.moduleVariants).length > 0 && (
+                <button
+                  onClick={() => update({ moduleVariants: {} })}
+                  className="w-full rounded-md border border-warm-200 px-3 py-2 text-xs text-ink/50 hover:bg-warm-200/50"
+                >
+                  恢复当前主题默认模块
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <hr className="border-warm-200" />
@@ -224,28 +264,6 @@ export default function StylePanel({ settings, onChange, embedded = false }: Sty
                 }`}
               >
                 {w === "300" ? "Light" : "Regular"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <hr className="border-warm-200" />
-
-        {/* H2 Style */}
-        <div className="space-y-2">
-          <label className="text-xs text-ink/50">H2 标题样式</label>
-          <div className="grid grid-cols-2 gap-1.5">
-            {h2StyleOptions.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => update({ h2Style: opt.value })}
-                className={`text-left px-2.5 py-1.5 rounded-md text-xs transition-all border ${
-                  settings.h2Style === opt.value
-                    ? "border-ink/20 bg-ink/5 text-ink font-medium"
-                    : "border-transparent text-ink/50 hover:bg-warm-200/50"
-                }`}
-              >
-                {opt.label}
               </button>
             ))}
           </div>
