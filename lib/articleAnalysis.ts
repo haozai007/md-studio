@@ -9,6 +9,7 @@ import {
   ThemeRecommendation,
 } from "./articleTypes";
 import { ThemeName } from "./themeConfig";
+import { installChineseStrongCompatibility, repairChineseStrongBoundaries } from "./markdownCompatibility";
 
 const analyzer = new MarkdownIt({
   html: false,
@@ -16,6 +17,7 @@ const analyzer = new MarkdownIt({
   typographer: true,
   breaks: true,
 });
+installChineseStrongCompatibility(analyzer);
 
 const CONCLUSION_RE = /^(结语|总结|写在最后|最后的话|尾声|小结|结论|后记|尾记)/;
 const PLACEHOLDER_RE = /\{\{[^}]+\}\}|\bTODO\b|【(?:插入|待补|补充)[^】]*】/i;
@@ -268,7 +270,7 @@ function qualityChecks(
 }
 
 export function analyzeArticle(markdown: string): ArticleAnalysis {
-  const tokens = analyzer.parse(markdown, {});
+  const tokens = analyzer.parse(repairChineseStrongBoundaries(markdown), {});
   const headings: ArticleHeading[] = [];
   const paragraphs: { text: string; line: number; strong: string[] }[] = [];
   let listItems = 0;

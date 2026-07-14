@@ -24,6 +24,7 @@ import {
 import { StyleSettings } from "./themeConfig";
 import { getTheme, getThemeOrDefault, isThemeName } from "./themes/registry";
 import { validateWechatHTML, ValidationReport } from "./wechatValidator";
+import { installChineseStrongCompatibility, repairChineseStrongBoundaries } from "./markdownCompatibility";
 
 export interface RenderOptions {
   smart?: SmartFormattingSettings;
@@ -144,6 +145,7 @@ function buildRenderer(
   acceptedKeywordIds: string[]
 ): string {
   const md = new MarkdownIt({ html: false, linkify: true, typographer: true, breaks: true });
+  installChineseStrongCompatibility(md);
   md.validateLink = (url) => safeURL(url, "link") !== null;
 
   const fontStack = getFontStack(settings.fontFamily, mode);
@@ -349,7 +351,7 @@ function buildRenderer(
   md.renderer.rules.td_open = cellOpen;
   md.renderer.rules.td_close = () => "</section>";
 
-  const body = md.render(markdown);
+  const body = md.render(repairChineseStrongBoundaries(markdown));
   return body;
 }
 
