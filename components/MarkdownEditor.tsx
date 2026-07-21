@@ -4,6 +4,7 @@ import React, { forwardRef, useImperativeHandle, useRef } from "react";
 
 export interface MarkdownEditorHandle {
   insertText: (text: string) => void;
+  scrollToSourceLine: (line: number) => void;
 }
 
 interface MarkdownEditorProps {
@@ -31,6 +32,53 @@ const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
             const cursor = start + text.length;
             textarea?.setSelectionRange(cursor, cursor);
           });
+        },
+        scrollToSourceLine: (line: number) => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+
+          let lineStart = 0;
+          for (let currentLine = 1; currentLine < line; currentLine++) {
+            const newline = value.indexOf("\n", lineStart);
+            if (newline < 0) {
+              lineStart = value.length;
+              break;
+            }
+            lineStart = newline + 1;
+          }
+
+          const styles = window.getComputedStyle(textarea);
+          const mirror = document.createElement("div");
+          Object.assign(mirror.style, {
+            position: "fixed",
+            visibility: "hidden",
+            pointerEvents: "none",
+            left: "-10000px",
+            top: "0",
+            boxSizing: styles.boxSizing,
+            width: `${textarea.offsetWidth}px`,
+            padding: styles.padding,
+            border: styles.border,
+            font: styles.font,
+            letterSpacing: styles.letterSpacing,
+            lineHeight: styles.lineHeight,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "break-word",
+            wordBreak: styles.wordBreak,
+          });
+          mirror.appendChild(document.createTextNode(value.slice(0, lineStart)));
+          const marker = document.createElement("span");
+          marker.textContent = "\u200b";
+          mirror.appendChild(marker);
+          document.body.appendChild(mirror);
+
+          const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+          const targetScroll = Math.max(
+            0,
+            Math.min(maxScroll, marker.offsetTop - textarea.clientHeight * 0.2)
+          );
+          textarea.scrollTop = targetScroll;
+          document.body.removeChild(mirror);
         },
       }),
       [onChange, value]

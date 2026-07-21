@@ -30,6 +30,7 @@ export interface RenderOptions {
   smart?: SmartFormattingSettings;
   analysis?: ArticleAnalysis;
   acceptedKeywordIds?: string[];
+  includeSourceMap?: boolean;
 }
 
 export interface RenderResult {
@@ -73,17 +74,20 @@ function stripSmartDecorations(
 ): string {
   const lines = markdown.split(/\r?\n/);
   const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
-  if (titleIndex >= 0) lines.splice(titleIndex, 1);
+  // Keep the original line count intact so markdown-it token maps continue to
+  // point at the correct line in the editor.
+  if (titleIndex >= 0) lines[titleIndex] = "";
   if (smart.showIntro && analysis.intro) {
-    let cursor = Math.max(0, titleIndex);
+    let cursor = Math.max(0, titleIndex + 1);
     while (cursor < lines.length && !lines[cursor].trim()) cursor++;
     if (/^>/.test(lines[cursor] || "")) {
       while (cursor < lines.length && (/^>/.test(lines[cursor]) || !lines[cursor].trim())) {
-        lines.splice(cursor, 1);
+        lines[cursor] = "";
+        cursor++;
       }
     }
   }
-  return lines.join("\n").replace(/^\s+/, "");
+  return lines.join("\n");
 }
 
 function plainTextFromMarkdown(markdown: string): string {
@@ -142,7 +146,8 @@ function buildRenderer(
   context: ThemeComponentContext,
   smart: SmartFormattingSettings | undefined,
   analysis: ArticleAnalysis,
-  acceptedKeywordIds: string[]
+  acceptedKeywordIds: string[],
+  includeSourceMap: boolean
 ): string {
   const md = new MarkdownIt({ html: false, linkify: true, typographer: true, breaks: true });
   installChineseStrongCompatibility(md);
@@ -168,6 +173,10 @@ function buildRenderer(
   let skipParagraph = false;
   let listItemDepth = 0;
   const listStack: { ordered: boolean; index: number }[] = [];
+  const sourceMarker = (token: { map?: number[] | null }) => {
+    if (!includeSourceMap || !token.map) return "";
+    return `<span data-source-line="${token.map[0] + 1}" style="display:block;height:0;line-height:0;overflow:hidden;"></span>`;
+  };
 
   const isImageOnlyParagraph = (tokens: Parameters<NonNullable<typeof md.renderer.rules.paragraph_open>>[0], index: number) => {
     const inline = tokens[index + 1];
@@ -202,7 +211,7 @@ function buildRenderer(
         )}</span>`;
       }
     }
-    return themeRenderers.headingOpen({ tag, size, title, isH2, isConclusion, prefix }, context);
+    return sourceMarker(tokens[index]) + themeRenderers.headingOpen({ tag, size, title, isH2, isConclusion, prefix }, context);
   };
   md.renderer.rules.heading_close = () => {
     insideHeading = false;
@@ -212,8 +221,9 @@ function buildRenderer(
   md.renderer.rules.paragraph_open = (tokens, index) => {
     skipParagraph = isImageOnlyParagraph(tokens, index);
     insideParagraph = !skipParagraph;
-    if (skipParagraph) return "";
-    return `<p style="${toStyleString({
+    const marker = sourceMarker(tokens[index]);
+    if (skipParagraph) return marker;
+    return `${marker}<p style="${toStyleString({
       margin: listItemDepth ? "0" : `0 0 ${settings.paragraphSpacing}em`,
       fontFamily: fontStack,
       fontWeight: settings.fontWeight,
@@ -278,14 +288,14 @@ function buildRenderer(
     insideCode = true;
     const rendered = renderCodeBlock(tokens[index].content, "", context);
     insideCode = false;
-    return rendered;
+    return sourceMarker(tokens[index]) + rendered;
   };
   md.renderer.rules.fence = (tokens, index) => {
     insideCode = true;
     const language = tokens[index].info.trim().split(/\s+/)[0] || "";
     const rendered = renderCodeBlock(tokens[index].content, language, context);
     insideCode = false;
-    return rendered;
+    return sourceMarker(tokens[index]) + rendered;
   };
 
   md.renderer.rules.link_open = (tokens, index) => {
@@ -315,13 +325,13 @@ function buildRenderer(
     const source = tokens[index].attrGet("src") || "";
     return renderImage(source, tokens[index].content || "", context);
   };
-  md.renderer.rules.hr = () => `<section style="height:1px;border-top:1px solid ${hexToRgba(settings.textColor, 0.12)};margin:${settings.sectionSpacing}em 0;"></section>`;
+  md.renderer.rules.hr = (tokens, index) => `${sourceMarker(tokens[index])}<section style="height:1px;border-top:1px solid ${hexToRgba(settings.textColor, 0.12)};margin:${settings.sectionSpacing}em 0;"></section>`;
   md.renderer.rules.hardbreak = () => "<br>";
   md.renderer.rules.softbreak = () => "<br>";
 
   let tableHeader = false;
   let tableColumnCount = 0;
-  md.renderer.rules.table_open = () => `<section style="margin:0 0 ${settings.paragraphSpacing}em;border:1px solid ${hexToRgba(settings.textColor, 0.14)};border-radius:${settings.borderRadius}px;overflow:hidden;">`;
+  md.renderer.rules.table_open = (tokens, index) => `${sourceMarker(tokens[index])}<section style="margin:0 0 ${settings.paragraphSpacing}em;border:1px solid ${hexToRgba(settings.textColor, 0.14)};border-radius:${settings.borderRadius}px;overflow:hidden;">`;
   md.renderer.rules.table_close = () => "</section>";
   md.renderer.rules.thead_open = () => {
     tableHeader = true;
@@ -369,13 +379,18 @@ export function compileWechatArticle(
   const context: ThemeComponentContext = { settings, fontStack, articleType };
   const source = smart?.enabled ? stripSmartDecorations(markdown, analysis, smart) : markdown;
   const acceptedKeywordIds = options.acceptedKeywordIds || [];
+  const includeSourceMap = options.includeSourceMap === true;
   let content = "";
   if (smart?.enabled) {
+    if (includeSourceMap) {
+      const titleLine = markdown.split(/\r?\n/).findIndex((line) => /^#\s+/.test(line));
+      content += `<span data-source-line="${Math.max(0, titleLine) + 1}" style="display:block;height:0;line-height:0;overflow:hidden;"></span>`;
+    }
     content += renderArticleTitle(analysis.title, context);
     if (smart.showIntro && analysis.intro) content += renderIntroCard(analysis.intro, context);
     if (smart.showToc && analysis.toc.length >= 1) content += renderToc(analysis.toc, context);
   }
-  content += buildRenderer(source, settings, mode, context, smart, analysis, acceptedKeywordIds);
+  content += buildRenderer(source, settings, mode, context, smart, analysis, acceptedKeywordIds, includeSourceMap);
   const hasSignature = /(我是.{1,20}[，,]|(?:作者|撰文|文)[：:]|点赞|在看|转发|下篇见)/.test(markdown.slice(-500));
   if (smart?.enabled && smart.showSignature && !hasSignature) {
     content += renderSignature(smart.authorName, smart.authorBio, context);
@@ -390,11 +405,14 @@ export function compileWechatArticle(
     margin: "0 auto",
     minHeight: "100%",
   })}">${content}</section>`;
+  const validationHTML = includeSourceMap
+    ? html.replace(/<span data-source-line="\d+" style="display:block;height:0;line-height:0;overflow:hidden;"><\/span>/g, "")
+    : html;
   return {
     html,
     plainText: plainTextFromMarkdown(markdown),
     analysis,
-    validation: validateWechatHTML(html),
+    validation: validateWechatHTML(validationHTML),
   };
 }
 

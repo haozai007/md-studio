@@ -117,6 +117,16 @@ export default function Home() {
       }),
     [activeKeywordIds, analysis, markdown, settings, smartSettings]
   );
+  const previewResult = useMemo(
+    () =>
+      compileWechatArticle(markdown, settings, "preview", {
+        smart: smartSettings,
+        analysis,
+        acceptedKeywordIds: activeKeywordIds,
+        includeSourceMap: true,
+      }),
+    [activeKeywordIds, analysis, markdown, settings, smartSettings]
+  );
 
   const handleCopy = useCallback(async () => {
     if (!renderResult.validation.valid) {
@@ -233,10 +243,11 @@ export default function Home() {
       preview={
         <PreviewPane
           ref={previewRef}
-          result={renderResult}
+          result={previewResult}
           settings={settings}
           isMobile={isMobile}
           onToggleMobile={() => setIsMobile(!isMobile)}
+          onVisibleSourceLineChange={(line) => editorRef.current?.scrollToSourceLine(line)}
         />
       }
       stylePanel={

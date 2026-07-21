@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect, forwardRef } from "react";
+import React, { useRef, useState, useEffect, forwardRef, useCallback } from "react";
 import { RenderResult } from "@/lib/renderMarkdown";
 import { StyleSettings } from "@/lib/themeConfig";
 
@@ -9,6 +9,7 @@ interface PreviewPaneProps {
   settings: StyleSettings;
   isMobile: boolean;
   onToggleMobile: () => void;
+  onVisibleSourceLineChange?: (line: number) => void;
 }
 
 /* ─── Inline SVG icons for status bar ─── */
@@ -90,11 +91,51 @@ const FRAME_PADDING = 8;
 const FRAME_W = SCREEN_W + FRAME_PADDING * 2; // 391
 
 const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
-  function PreviewPane({ result, settings, isMobile, onToggleMobile }, ref) {
+  function PreviewPane({ result, settings, isMobile, onToggleMobile, onVisibleSourceLineChange }, ref) {
     const html = result.html;
 
     const scalerParentRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+    const scrollFrameRef = useRef<number | null>(null);
+    const lastSourceLineRef = useRef<number | null>(null);
     const [phoneScale, setPhoneScale] = useState(1);
+
+    const setContentRef = useCallback(
+      (node: HTMLDivElement | null) => {
+        contentRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref]
+    );
+
+    const syncEditorToPreview = useCallback(
+      (scrollContainer: HTMLDivElement) => {
+        if (scrollFrameRef.current !== null) return;
+        scrollFrameRef.current = window.requestAnimationFrame(() => {
+          scrollFrameRef.current = null;
+          const root = contentRef.current;
+          if (!root) return;
+          const markers = root.querySelectorAll<HTMLElement>("[data-source-line]");
+          if (!markers.length) return;
+
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const probeY = containerRect.top + containerRect.height * 0.22;
+          let active = markers[0];
+          for (let index = 0; index < markers.length; index++) {
+            const marker = markers[index];
+            if (marker.getBoundingClientRect().top <= probeY) active = marker;
+            else break;
+          }
+
+          const line = Number(active.dataset.sourceLine);
+          if (!Number.isFinite(line) || line === lastSourceLineRef.current) return;
+          lastSourceLineRef.current = line;
+          onVisibleSourceLineChange?.(line);
+        });
+      },
+      [onVisibleSourceLineChange]
+    );
 
     useEffect(() => {
       if (!isMobile) return;
@@ -108,6 +149,12 @@ const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
       observer.observe(el);
       return () => observer.disconnect();
     }, [isMobile]);
+
+    useEffect(() => {
+      return () => {
+        if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
+      };
+    }, []);
 
     return (
       <div className="flex flex-col h-full">
@@ -131,6 +178,9 @@ const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
         {/* Content */}
         <div
           ref={scalerParentRef}
+          onScroll={(event) => {
+            if (!isMobile) syncEditorToPreview(event.currentTarget);
+          }}
           className="flex-1 overflow-auto bg-[#E8E8E0] p-6 flex justify-center items-start"
         >
           {!result.validation.valid ? (
@@ -201,13 +251,14 @@ const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                   {/* ── Scrollable content ── */}
                   <div
                     className="overflow-auto [&::-webkit-scrollbar]:hidden"
+                    onScroll={(event) => syncEditorToPreview(event.currentTarget)}
                     style={{
                       height: SCREEN_H - 54,
                       scrollbarWidth: "none",
                     }}
                   >
                     <div
-                      ref={ref}
+                      ref={setContentRef}
                       className="mx-auto"
                       style={{
                         maxWidth: `${settings.contentWidth}px`,
@@ -233,7 +284,7 @@ const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
           ) : (
             /* Desktop preview */
             <div
-              ref={ref}
+              ref={setContentRef}
               className="bg-white shadow-sm mx-auto"
               style={{ maxWidth: `${settings.contentWidth}px` }}
               dangerouslySetInnerHTML={{ __html: html }}
